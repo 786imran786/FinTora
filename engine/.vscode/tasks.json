@@ -1,0 +1,62 @@
+{
+    "version": "2.0.0",
+
+    "tasks": [
+        {
+            "label": "Build OrderBook Tests",
+
+            "type": "shell",
+
+            "command": "g++",
+
+            "args": [
+                "-std=c++20",
+                "-Wall",
+                "-Wextra",
+                "src/OrderBook.cpp",
+                "tests/OrderBookTest.cpp",
+                "-Iinclude",
+                "-o",
+                "OrderBookTest.exe"
+            ],
+
+            "group": {
+                "kind": "test",
+                "isDefault": false
+            },
+
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+
+        {
+            "label": "Build Matching Engine Tests",
+
+            "type": "shell",
+
+            "command": "g++",
+
+            "args": [
+                "-std=c++20",
+                "-Wall",
+                "-Wextra",
+                "src/OrderBook.cpp",
+                "src/MatchingEngine.cpp",
+                "tests/MatchingEngineTest.cpp",
+                "-Iinclude",
+                "-o",
+                "MatchingEngineTest.exe"
+            ],
+
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+
+            "problemMatcher": [
+                "$gcc"
+            ]
+        }
+    ]
+}
