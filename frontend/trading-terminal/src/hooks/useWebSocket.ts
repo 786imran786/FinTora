@@ -114,12 +114,16 @@ export function useWebSocket() {
       return () => window.clearInterval(intervalId)
     }
 
-    const wsUrl = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8080/ws'
+    const wsUrl = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8080'
     const socket = new WebSocket(wsUrl)
     socketRef.current = socket
     setConnectionStatus('CONNECTING')
 
-    socket.onopen = () => setConnectionStatus('CONNECTED')
+    socket.onopen = () => {
+      setConnectionStatus('CONNECTED')
+      // Request initial metrics immediately on connect
+      socket.send(JSON.stringify({ type: 'GET_METRICS' }))
+    }
     socket.onclose = () => setConnectionStatus('DISCONNECTED')
     socket.onerror = () => setConnectionStatus('DISCONNECTED')
     socket.onmessage = (event) => {
@@ -132,7 +136,15 @@ export function useWebSocket() {
       }
     }
 
+    // Poll metrics every 5 seconds
+    const metricsInterval = window.setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'GET_METRICS' }))
+      }
+    }, 5000)
+
     return () => {
+      window.clearInterval(metricsInterval)
       socket.close()
       socketRef.current = null
     }
@@ -144,12 +156,15 @@ export function useWebSocket() {
       return
     }
 
-    const wsUrl = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8080/ws'
+    const wsUrl = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8080'
     const socket = new WebSocket(wsUrl)
     socketRef.current = socket
     setConnectionStatus('CONNECTING')
 
-    socket.onopen = () => setConnectionStatus('CONNECTED')
+    socket.onopen = () => {
+      setConnectionStatus('CONNECTED')
+      socket.send(JSON.stringify({ type: 'GET_METRICS' }))
+    }
     socket.onclose = () => setConnectionStatus('DISCONNECTED')
     socket.onerror = () => setConnectionStatus('DISCONNECTED')
     socket.onmessage = (event) => {

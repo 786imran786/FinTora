@@ -15,8 +15,13 @@ void ClientManager::removeClient(std::shared_ptr<WebSocketSession> session) {
 }
 
 void ClientManager::broadcast(const std::string& message) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& session : sessions_) {
+    std::vector<std::shared_ptr<WebSocketSession>> targets;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        targets.assign(sessions_.begin(), sessions_.end());
+    }
+
+    for (const auto& session : targets) {
         try {
             session->send(message);
         } catch (const std::exception& e) {

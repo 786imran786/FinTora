@@ -64,7 +64,16 @@ HandleResult RequestHandler::handlePlaceOrder(const json& msg) {
 
     metrics_.recordOrder();
 
-    result.directResponse = Protocol::orderAccepted(engineResult.orderId);
+    // Enrich ORDER_ACCEPTED with the original request fields so the
+    // frontend can immediately add the order to the Open Orders list.
+    json accepted = Protocol::orderAccepted(engineResult.orderId);
+    accepted["side"]      = Protocol::sideToString(req.side);
+    accepted["orderType"] = (req.orderType == OrderType::LIMIT) ? "LIMIT" : "MARKET";
+    accepted["quantity"]  = req.quantity;
+    if (req.orderType == OrderType::LIMIT) {
+        accepted["price"] = req.price;
+    }
+    result.directResponse = accepted;
 
     for (const auto& trade : engineResult.trades) {
         result.broadcasts.push_back(Protocol::tradeEvent(trade));
@@ -72,7 +81,9 @@ HandleResult RequestHandler::handlePlaceOrder(const json& msg) {
     }
 
     for (const auto& update : engineResult.orderUpdates) {
-        result.broadcasts.push_back(Protocol::orderUpdate(update));
+        if (update.remainingQuantity >= 0) {  // skip sentinel -1 updates
+            result.broadcasts.push_back(Protocol::orderUpdate(update));
+        }
     }
 
     if (engineResult.bookChanged) {

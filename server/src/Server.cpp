@@ -33,6 +33,7 @@ void Server::stop() {
 
 void Server::doAccept() {
     acceptor_.async_accept(
+        net::make_strand(ioc_),
         [this](beast::error_code ec, tcp::socket socket) {
             if (!ec) {
                 auto session = std::make_shared<WebSocketSession>(

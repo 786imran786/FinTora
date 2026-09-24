@@ -1,23 +1,42 @@
 // =============================================================================
-// STUB EngineAdapter
-//
-// This is a TEMPORARY stub so the server compiles without MEMBER 1's engine.
-// It provides minimal order storage and basic matching to enable end-to-end
-// testing of the WebSocket/JSON layer.
-//
-// MEMBER 1 INTEGRATION:
-//   1. Include MEMBER 1's MatchingEngine headers.
-//   2. Replace the stub internals with calls to the real engine.
-//   3. Remove StubOrder, the orders_ map, and tryMatch().
-//   4. The public interface (placeOrder, cancelOrder, getOrderBook,
-//      getActiveOrderCount) stays the same — only the implementation changes.
+// EngineAdapter — wired to the real MatchingEngine
 // =============================================================================
 
 #include "EngineAdapter.hpp"
+
+// Real matching engine headers (from ../engine/include/)
+#include "MatchingEngine.h"
+#include "Order.h"
+#include "Event.h"
+
 #include <algorithm>
+#include <chrono>
 #include <iostream>
 
 namespace fintora {
+
+// -------------------------------------------------------------------------
+// Helpers: convert between server-protocol types and engine types
+// -------------------------------------------------------------------------
+
+static ::Side toEngineSide(Side s) {
+    return (s == Side::BUY) ? ::Side::BUY : ::Side::SELL;
+}
+
+static ::OrderType toEngineOrderType(OrderType t) {
+    return (t == OrderType::LIMIT) ? ::OrderType::LIMIT : ::OrderType::MARKET;
+}
+
+// Returns microseconds since epoch as a uint64_t (used for order timestamps).
+static std::uint64_t nowUs() {
+    using namespace std::chrono;
+    return static_cast<std::uint64_t>(
+        duration_cast<microseconds>(system_clock::now().time_since_epoch()).count());
+}
+
+// -------------------------------------------------------------------------
+// EngineAdapter implementation
+// -------------------------------------------------------------------------
 
 EngineAdapter::EngineAdapter() {}
 
@@ -26,98 +45,92 @@ EngineResult EngineAdapter::placeOrder(Side side, OrderType orderType, double pr
 
     EngineResult result;
 
-    StubOrder order;
-    order.id = nextOrderId_++;
-    order.side = side;
-    order.orderType = orderType;
-    order.price = price;
-    order.quantity = quantity;
-    order.remainingQuantity = quantity;
+    // Build the engine Order
+    ::Order order;
+    order.orderId           = nextOrderId_++;
+    order.symbol            = "BTC/USDT";
+    order.side              = toEngineSide(side);
+    order.orderType         = toEngineOrderType(orderType);
+    order.price             = price;
+    order.quantity          = static_cast<std::uint64_t>(quantity);
+    order.remainingQuantity = static_cast<std::uint64_t>(quantity);
+    order.timestamp         = nowUs();
 
-    result.orderId = order.id;
-    result.accepted = true;
+    // Submit to the real matching engine
+    std::vector<::Event> events = engine_.placeOrder(order);
 
-    EngineResult matchResult = tryMatch(order);
-    result.trades = std::move(matchResult.trades);
-    result.orderUpdates = std::move(matchResult.orderUpdates);
+    result.orderId   = static_cast<int64_t>(order.orderId);
+    result.accepted  = true;
 
-    if (order.remainingQuantity > 0 && orderType == OrderType::LIMIT) {
-        orders_[order.id] = order;
-        result.status = (order.remainingQuantity < quantity)
-            ? OrderStatus::PARTIALLY_FILLED
-            : OrderStatus::ACCEPTED;
-        result.remainingQuantity = order.remainingQuantity;
-        result.bookChanged = true;
+    int64_t remaining = quantity; // will be updated from events
 
-        if (result.status == OrderStatus::PARTIALLY_FILLED) {
-            result.orderUpdates.push_back({order.id, OrderStatus::PARTIALLY_FILLED, order.remainingQuantity});
-        }
-    } else if (order.remainingQuantity == 0) {
-        result.status = OrderStatus::FILLED;
-        result.remainingQuantity = 0;
-        result.orderUpdates.push_back({order.id, OrderStatus::FILLED, 0});
-        result.bookChanged = true;
-    } else {
-        if (orderType == OrderType::MARKET && order.remainingQuantity > 0) {
-            if (order.remainingQuantity == quantity) {
-                result.accepted = false;
-                result.rejectReason = "No liquidity for market order";
-                return result;
+    for (const auto& ev : events) {
+        switch (ev.type) {
+            case EventType::ORDER_ACCEPTED:
+                // Nothing extra needed
+                break;
+
+            case EventType::TRADE_EXECUTED: {
+                TradeEvent te;
+                te.tradeId  = static_cast<int64_t>(ev.trade.tradeId);
+                te.price    = ev.trade.price;
+                te.quantity = static_cast<int64_t>(ev.trade.quantity);
+                result.trades.push_back(te);
+
+                // Update remaining for the incoming order
+                if (ev.trade.buyOrderId == order.orderId ||
+                    ev.trade.sellOrderId == order.orderId) {
+                    remaining -= static_cast<int64_t>(ev.trade.quantity);
+                }
+                break;
             }
-            result.status = OrderStatus::FILLED;
-            result.remainingQuantity = 0;
-            result.orderUpdates.push_back({order.id, OrderStatus::FILLED, 0});
-            result.bookChanged = !result.trades.empty();
+
+            case EventType::ORDER_COMPLETELY_FILLED: {
+                // If this is the incoming order being filled
+                if (ev.orderId == order.orderId) {
+                    result.status            = OrderStatus::FILLED;
+                    result.remainingQuantity = 0;
+                    result.orderUpdates.push_back({result.orderId, OrderStatus::FILLED, 0});
+                } else {
+                    // A resting order was completely filled
+                    result.orderUpdates.push_back(
+                        {static_cast<int64_t>(ev.orderId), OrderStatus::FILLED, 0});
+                }
+                break;
+            }
+
+            case EventType::ORDER_PARTIALLY_FILLED: {
+                if (ev.orderId == order.orderId) {
+                    result.status            = OrderStatus::PARTIALLY_FILLED;
+                    result.remainingQuantity = remaining;
+                    result.orderUpdates.push_back(
+                        {result.orderId, OrderStatus::PARTIALLY_FILLED, remaining});
+                } else {
+                    // We don't know exact remaining for the resting order from the event,
+                    // but we can query the open orders list. For now emit a partial update
+                    // with quantity=0 as a sentinel; the ORDER_BOOK broadcast covers it.
+                    result.orderUpdates.push_back(
+                        {static_cast<int64_t>(ev.orderId), OrderStatus::PARTIALLY_FILLED, -1});
+                }
+                break;
+            }
+
+            case EventType::ORDER_BOOK_CHANGED:
+                result.bookChanged = true;
+                break;
+
+            default:
+                break;
         }
     }
 
-    if (!result.trades.empty()) {
-        result.bookChanged = true;
-    }
-
-    return result;
-}
-
-EngineResult EngineAdapter::tryMatch(StubOrder& incoming) {
-    EngineResult result;
-
-    auto it = orders_.begin();
-    while (it != orders_.end() && incoming.remainingQuantity > 0) {
-        auto& resting = it->second;
-
-        bool canMatch = false;
-        if (incoming.side == Side::BUY && resting.side == Side::SELL) {
-            if (incoming.orderType == OrderType::MARKET || incoming.price >= resting.price) {
-                canMatch = true;
-            }
-        } else if (incoming.side == Side::SELL && resting.side == Side::BUY) {
-            if (incoming.orderType == OrderType::MARKET || incoming.price <= resting.price) {
-                canMatch = true;
-            }
-        }
-
-        if (canMatch) {
-            int64_t fillQty = std::min(incoming.remainingQuantity, resting.remainingQuantity);
-            double fillPrice = resting.price;
-
-            TradeEvent trade;
-            trade.tradeId = nextTradeId_++;
-            trade.price = fillPrice;
-            trade.quantity = fillQty;
-            result.trades.push_back(trade);
-
-            incoming.remainingQuantity -= fillQty;
-            resting.remainingQuantity -= fillQty;
-
-            if (resting.remainingQuantity == 0) {
-                result.orderUpdates.push_back({resting.id, OrderStatus::FILLED, 0});
-                it = orders_.erase(it);
-            } else {
-                result.orderUpdates.push_back({resting.id, OrderStatus::PARTIALLY_FILLED, resting.remainingQuantity});
-                ++it;
-            }
-        } else {
-            ++it;
+    // If no fill/partial events fired for the incoming order, it was accepted and rests
+    if (result.status == OrderStatus::ACCEPTED) {
+        result.remainingQuantity = remaining;
+        // Only LIMIT orders rest; MARKET orders that didn't fill get rejected for no liquidity
+        if (orderType == OrderType::MARKET && remaining == quantity) {
+            result.accepted     = false;
+            result.rejectReason = "No liquidity for market order";
         }
     }
 
@@ -130,14 +143,14 @@ CancelResult EngineAdapter::cancelOrder(int64_t orderId) {
     CancelResult result;
     result.orderId = orderId;
 
-    auto it = orders_.find(orderId);
-    if (it == orders_.end()) {
+    std::vector<::Event> events = engine_.cancelOrder(static_cast<std::uint64_t>(orderId));
+
+    if (events.empty()) {
         result.success = false;
-        result.reason = "Order not found";
+        result.reason  = "Order not found";
         return result;
     }
 
-    orders_.erase(it);
     result.success = true;
     return result;
 }
@@ -145,23 +158,16 @@ CancelResult EngineAdapter::cancelOrder(int64_t orderId) {
 OrderBookSnapshot EngineAdapter::getOrderBook() {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    std::map<double, int64_t, std::greater<>> bidLevels;
-    std::map<double, int64_t> askLevels;
-
-    for (const auto& [id, order] : orders_) {
-        if (order.side == Side::BUY) {
-            bidLevels[order.price] += order.remainingQuantity;
-        } else {
-            askLevels[order.price] += order.remainingQuantity;
-        }
-    }
+    constexpr std::size_t DEPTH_LEVELS = 10;
+    const auto& ob = engine_.getOrderBook();
 
     OrderBookSnapshot snapshot;
-    for (const auto& [price, qty] : bidLevels) {
-        snapshot.bids.push_back({price, qty});
+
+    for (const auto& [price, qty] : ob.getBidDepth(DEPTH_LEVELS)) {
+        snapshot.bids.push_back({price, static_cast<int64_t>(qty)});
     }
-    for (const auto& [price, qty] : askLevels) {
-        snapshot.asks.push_back({price, qty});
+    for (const auto& [price, qty] : ob.getAskDepth(DEPTH_LEVELS)) {
+        snapshot.asks.push_back({price, static_cast<int64_t>(qty)});
     }
 
     return snapshot;
@@ -169,7 +175,7 @@ OrderBookSnapshot EngineAdapter::getOrderBook() {
 
 int64_t EngineAdapter::getActiveOrderCount() {
     std::lock_guard<std::mutex> lock(mutex_);
-    return static_cast<int64_t>(orders_.size());
+    return static_cast<int64_t>(engine_.getOpenOrders().size());
 }
 
 } // namespace fintora

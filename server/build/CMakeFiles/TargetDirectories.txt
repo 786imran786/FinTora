@@ -1,4 +1,3 @@
-C:/Users/mohdi/OneDrive/Desktop/fintora/server/build/CMakeFiles/order_server.dir
-C:/Users/mohdi/OneDrive/Desktop/fintora/server/build/CMakeFiles/protocol_test.dir
-C:/Users/mohdi/OneDrive/Desktop/fintora/server/build/CMakeFiles/edit_cache.dir
-C:/Users/mohdi/OneDrive/Desktop/fintora/server/build/CMakeFiles/rebuild_cache.dir
+C:/Users/mohdi/Downloads/new/FinTora/server/build/CMakeFiles/order_server.dir
+C:/Users/mohdi/Downloads/new/FinTora/server/build/CMakeFiles/edit_cache.dir
+C:/Users/mohdi/Downloads/new/FinTora/server/build/CMakeFiles/rebuild_cache.dir

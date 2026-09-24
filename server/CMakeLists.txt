@@ -35,13 +35,18 @@ add_executable(order_server
     src/RequestHandler.cpp
     src/WebSocketSession.cpp
     src/Server.cpp
+    # Real MatchingEngine sources
+    ../engine/src/MatchingEngine.cpp
+    ../engine/src/OrderBook.cpp
+    ../engine/src/Order.cpp
+    ../engine/src/Trade.cpp
 )
 
 if(WIN32)
     set(PLATFORM_LIBS ws2_32 mswsock)
 endif()
 
-target_include_directories(order_server PRIVATE include)
+target_include_directories(order_server PRIVATE include ../engine/include)
 target_link_libraries(order_server PRIVATE
     Boost::system
     Boost::thread
@@ -64,8 +69,12 @@ if(BUILD_TESTS)
         src/RequestHandler.cpp
         src/WebSocketSession.cpp
         src/Server.cpp
+        ../engine/src/MatchingEngine.cpp
+        ../engine/src/OrderBook.cpp
+        ../engine/src/Order.cpp
+        ../engine/src/Trade.cpp
     )
-    target_include_directories(protocol_test PRIVATE include)
+    target_include_directories(protocol_test PRIVATE include ../engine/include)
     target_link_libraries(protocol_test PRIVATE
         Boost::system
         Boost::thread

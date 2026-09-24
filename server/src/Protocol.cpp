@@ -122,26 +122,26 @@ json Protocol::tradeEvent(const TradeEvent& trade) {
 
 json Protocol::orderUpdate(const OrderUpdateEvent& update) {
     return {
-        {"type", "ORDER_UPDATE"},
+        {"type", "ORDER_STATUS"},
         {"orderId", update.orderId},
         {"status", orderStatusToString(update.status)},
-        {"remainingQuantity", update.remainingQuantity}
+        {"remaining", update.remainingQuantity}
     };
 }
 
 json Protocol::orderBook(const OrderBookSnapshot& snapshot) {
     json bids = json::array();
     for (const auto& level : snapshot.bids) {
-        bids.push_back({level.price, level.quantity});
+        bids.push_back({{"price", level.price}, {"quantity", level.quantity}});
     }
 
     json asks = json::array();
     for (const auto& level : snapshot.asks) {
-        asks.push_back({level.price, level.quantity});
+        asks.push_back({{"price", level.price}, {"quantity", level.quantity}});
     }
 
     return {
-        {"type", "ORDER_BOOK"},
+        {"type", "ORDER_BOOK_UPDATE"},
         {"bids", bids},
         {"asks", asks}
     };

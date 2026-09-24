@@ -1,8 +1,11 @@
 #pragma once
 
 #include "Protocol.hpp"
+
+// Real engine
+#include "MatchingEngine.h"
+
 #include <vector>
-#include <map>
 #include <mutex>
 #include <cstdint>
 
@@ -26,20 +29,7 @@ struct CancelResult {
 };
 
 // =============================================================================
-// EngineAdapter: Thin adapter around MEMBER 1's MatchingEngine.
-//
-// MEMBER 1 INTEGRATION:
-//   Replace the stub implementation in EngineAdapter.cpp with calls to the
-//   real MatchingEngine. The adapter methods map directly:
-//
-//     placeOrder()   -> MatchingEngine::placeOrder(...)
-//     cancelOrder()  -> MatchingEngine::cancelOrder(...)
-//     getOrderBook() -> MatchingEngine::getOrderBook() / OrderBook snapshot
-//     getActiveOrderCount() -> MatchingEngine active order count
-//
-//   The current stub provides minimal in-memory behavior so the server
-//   compiles and basic request/response flow can be tested end-to-end.
-//   It does NOT implement real price-time priority matching.
+// EngineAdapter: thin adapter around the real MatchingEngine.
 // =============================================================================
 class EngineAdapter {
 public:
@@ -51,23 +41,9 @@ public:
     int64_t getActiveOrderCount();
 
 private:
-    // --- STUB STATE (remove when connecting real engine) ---
-    struct StubOrder {
-        int64_t id;
-        Side side;
-        OrderType orderType;
-        double price;
-        int64_t quantity;
-        int64_t remainingQuantity;
-    };
-
     std::mutex mutex_;
+    ::MatchingEngine engine_;      // Real price-time priority engine
     int64_t nextOrderId_ = 1;
-    int64_t nextTradeId_ = 1;
-    std::map<int64_t, StubOrder> orders_;
-
-    EngineResult tryMatch(StubOrder& incoming);
-    // --- END STUB STATE ---
 };
 
 } // namespace fintora

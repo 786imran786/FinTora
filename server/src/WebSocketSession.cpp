@@ -6,10 +6,7 @@ namespace fintora {
 WebSocketSession::WebSocketSession(tcp::socket socket, ClientManager& clients, RequestHandler& handler)
     : ws_(std::move(socket)), clients_(clients), handler_(handler) {}
 
-WebSocketSession::~WebSocketSession() {
-    clients_.removeClient(shared_from_this());
-    std::cout << "Client disconnected (total: " << clients_.clientCount() << ")" << std::endl;
-}
+WebSocketSession::~WebSocketSession() = default;
 
 void WebSocketSession::run() {
     ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
@@ -44,15 +41,21 @@ void WebSocketSession::sendInitialOrderBook() {
 }
 
 void WebSocketSession::doRead() {
+    if (closed_) return;
+
     ws_.async_read(buffer_,
         beast::bind_front_handler(&WebSocketSession::onRead, shared_from_this()));
 }
 
 void WebSocketSession::onRead(beast::error_code ec, std::size_t /*bytesTransferred*/) {
     if (ec) {
-        if (ec != websocket::error::closed) {
+        if (ec != websocket::error::closed &&
+            ec != net::error::operation_aborted &&
+            ec != net::error::connection_reset &&
+            ec != net::error::connection_aborted) {
             std::cerr << "Read error: " << ec.message() << std::endl;
         }
+        disconnect();
         return;
     }
 
@@ -78,41 +81,69 @@ void WebSocketSession::onRead(beast::error_code ec, std::size_t /*bytesTransferr
 }
 
 void WebSocketSession::send(const std::string& message) {
-    auto msg = std::make_shared<std::string>(message);
+    if (closed_) return;
 
-    std::lock_guard<std::mutex> lock(writeMutex_);
-    writeQueue_.push_back(msg);
+    auto msg = std::make_shared<const std::string>(message);
 
-    if (!writing_) {
-        writing_ = true;
-        doWrite();
-    }
+    net::post(
+        ws_.get_executor(),
+        beast::bind_front_handler(
+            &WebSocketSession::onSend,
+            shared_from_this(),
+            msg));
 }
 
-void WebSocketSession::doWrite() {
-    if (writeQueue_.empty()) {
-        writing_ = false;
+void WebSocketSession::onSend(std::shared_ptr<const std::string> message) {
+    if (closed_) return;
+
+    writeQueue_.push_back(message);
+
+    if (writeQueue_.size() > 1) {
         return;
     }
 
-    auto msg = writeQueue_.front();
-    writeQueue_.erase(writeQueue_.begin());
-
     ws_.text(true);
-    ws_.async_write(net::buffer(*msg),
-        [self = shared_from_this(), msg](beast::error_code ec, std::size_t bytesTransferred) {
-            self->onWrite(ec, bytesTransferred);
-        });
+    ws_.async_write(
+        net::buffer(*writeQueue_.front()),
+        beast::bind_front_handler(
+            &WebSocketSession::onWrite,
+            shared_from_this()));
 }
 
 void WebSocketSession::onWrite(beast::error_code ec, std::size_t /*bytesTransferred*/) {
     if (ec) {
-        std::cerr << "Write error: " << ec.message() << std::endl;
+        if (ec != websocket::error::closed &&
+            ec != net::error::operation_aborted &&
+            ec != net::error::connection_reset &&
+            ec != net::error::connection_aborted) {
+            std::cerr << "Write error: " << ec.message() << std::endl;
+        }
+        disconnect();
         return;
     }
 
-    std::lock_guard<std::mutex> lock(writeMutex_);
-    doWrite();
+    if (closed_) return;
+
+    writeQueue_.erase(writeQueue_.begin());
+
+    if (!writeQueue_.empty()) {
+        ws_.text(true);
+        ws_.async_write(
+            net::buffer(*writeQueue_.front()),
+            beast::bind_front_handler(
+                &WebSocketSession::onWrite,
+                shared_from_this()));
+    }
+}
+
+void WebSocketSession::disconnect() {
+    bool expected = false;
+    if (closed_.compare_exchange_strong(expected, true)) {
+        clients_.removeClient(shared_from_this());
+        beast::error_code ec;
+        ws_.next_layer().socket().close(ec);
+        std::cout << "Client disconnected (total: " << clients_.clientCount() << ")" << std::endl;
+    }
 }
 
 } // namespace fintora

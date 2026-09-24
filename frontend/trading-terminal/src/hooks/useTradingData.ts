@@ -12,47 +12,32 @@ import type {
 } from '../types/trading'
 
 const baseOrderBook: OrderBookState = {
-  asks: [
-    { price: 105.0, quantity: 100 },
-    { price: 104.0, quantity: 250 },
-    { price: 103.0, quantity: 180 },
-  ],
-  bids: [
-    { price: 102.5, quantity: 300 },
-    { price: 101.8, quantity: 450 },
-    { price: 100.9, quantity: 600 },
-  ],
-  spread: 0.7,
-  bestAsk: 103,
-  bestBid: 102.5,
+  asks: [],
+  bids: [],
+  spread: 0,
+  bestAsk: null,
+  bestBid: null,
 }
 
 const baseMarketStats: MarketStats = {
-  lastPrice: 102.5,
-  bestBid: 102.5,
-  bestAsk: 103,
-  spread: 0.5,
-  volume: 12450,
+  lastPrice: 0,
+  bestBid: 0,
+  bestAsk: 0,
+  spread: 0,
+  volume: 0,
 }
 
 const baseMetrics: Metrics = {
-  ordersProcessed: 1284521,
-  tradesExecuted: 482391,
-  ordersPerSecond: 18420,
-  activeOrders: 8452,
-  totalVolume: 4820000,
+  ordersProcessed: 0,
+  tradesExecuted: 0,
+  ordersPerSecond: 0,
+  activeOrders: 0,
+  totalVolume: 0,
 }
 
-const baseTrades: Trade[] = [
-  { id: 1, price: 102.5, quantity: 100, side: 'BUY', time: '12:31:05' },
-  { id: 2, price: 102.4, quantity: 250, side: 'SELL', time: '12:31:02' },
-  { id: 3, price: 102.4, quantity: 50, side: 'BUY', time: '12:30:58' },
-]
+const baseTrades: Trade[] = []
 
-const baseOrders: Order[] = [
-  { id: 1001, side: 'BUY', type: 'LIMIT', price: 100.2, quantity: 100, remaining: 60, status: 'OPEN', createdAt: '12:31:05' },
-  { id: 1002, side: 'SELL', type: 'LIMIT', price: 105.1, quantity: 200, remaining: 200, status: 'OPEN', createdAt: '12:31:02' },
-]
+const baseOrders: Order[] = []
 
 const formatTime = (date: Date) => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`
 
@@ -115,9 +100,10 @@ export function useTradingData(messages: SocketMessage[]) {
 
       case 'TRADE': {
         const trade: Trade = {
-          id: Number(latest.id ?? Date.now()),
+          id: Number(latest.tradeId ?? latest.id ?? Date.now()),
           price: Number(latest.price ?? 0),
           quantity: Number(latest.quantity ?? 0),
+          // Real server doesn't send side; infer from context or default to BUY
           side: latest.side === 'SELL' ? 'SELL' : 'BUY',
           time: typeof latest.time === 'string' ? latest.time : formatTime(new Date()),
         }
@@ -159,11 +145,19 @@ export function useTradingData(messages: SocketMessage[]) {
       case 'ORDER_STATUS': {
         const orderId = Number(latest.orderId ?? 0)
         const remaining = Number(latest.remaining ?? 0)
-        setOpenOrders((prev) =>
-          prev.map((item) =>
-            item.id === orderId ? { ...item, remaining, status: remaining <= 0 ? 'FILLED' : 'OPEN' } : item,
-          ),
-        )
+        const statusRaw = String(latest.status ?? '')
+        if (statusRaw === 'CANCELLED') {
+          setOpenOrders((prev) => prev.filter((item) => item.id !== orderId))
+          addNotification('warning', 'Order cancelled', `Order #${orderId}`)
+        } else {
+          setOpenOrders((prev) =>
+            prev.map((item) =>
+              item.id === orderId
+                ? { ...item, remaining, status: remaining <= 0 ? 'FILLED' : statusRaw === 'PARTIALLY_FILLED' ? 'PARTIALLY_FILLED' : 'OPEN' }
+                : item,
+            ),
+          )
+        }
         break
       }
 
@@ -180,6 +174,11 @@ export function useTradingData(messages: SocketMessage[]) {
           String(latest.title ?? 'Market update'),
           String(latest.message ?? ''),
         )
+        break
+      }
+
+      case 'ORDER_REJECTED': {
+        addNotification('error', 'Order rejected', String(latest.reason ?? 'Order was rejected'))
         break
       }
 

@@ -7,6 +7,8 @@
 #include <boost/beast.hpp>
 #include <memory>
 #include <string>
+#include <vector>
+#include <atomic>
 
 namespace beast = boost::beast;
 namespace websocket = beast::websocket;
@@ -22,11 +24,13 @@ public:
 
     void run();
     void send(const std::string& message);
+    void disconnect();
 
 private:
     void onAccept(beast::error_code ec);
     void doRead();
     void onRead(beast::error_code ec, std::size_t bytesTransferred);
+    void onSend(std::shared_ptr<const std::string> message);
     void onWrite(beast::error_code ec, std::size_t bytesTransferred);
     void sendInitialOrderBook();
 
@@ -34,10 +38,8 @@ private:
     beast::flat_buffer buffer_;
     ClientManager& clients_;
     RequestHandler& handler_;
-    std::vector<std::shared_ptr<std::string>> writeQueue_;
-    std::mutex writeMutex_;
-    bool writing_ = false;
-    void doWrite();
+    std::vector<std::shared_ptr<const std::string>> writeQueue_;
+    std::atomic<bool> closed_{false};
 };
 
 } // namespace fintora
