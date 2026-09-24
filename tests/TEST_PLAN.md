@@ -11,7 +11,12 @@ The test harness should bind the inputs below to the eventual public engine API.
 - A trade reports the correct execution price and quantity.
 - Filled orders are removed from the active book; partially filled orders retain only their unfilled quantity.
 - Resting orders remain ordered by price, then FIFO time priority within a price level.
-- Price-level quantities equal the sum of active order quantities at that level.tests/TEST_PLAN.mdtests/TEST_PLAN.md
+- Price-level quantities equal the sum of active order quantities at that level.tests/TEST_PLAN.mdtests/TEST_PLAN.mdcd "C:\Users\janhv\OneDrive\Documents\Fintora\FinTora"
+
+git status
+git add tests/TEST_PLAN.md
+git commit -m "Add matching engine QA test plan"
+git push origin simulator
 - A market order never becomes a resting limit order when available opposing liquidity is exhausted.
 - Empty-book and non-marketable cases produce no trade and preserve valid active-order state.
 
